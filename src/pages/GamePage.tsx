@@ -35,6 +35,31 @@ const gameConfigs: Record<string, { component: React.ReactNode; title: string; c
     title: 'فضاء سلوتس',
     category: 'سلوتس',
   },
+  'lucky777': {
+    component: <SlotMachine theme="lucky777" />,
+    title: 'لاكي 777',
+    category: 'سلوتس',
+  },
+  'aztec': {
+    component: <SlotMachine theme="aztec" />,
+    title: 'ذهب الأزتك',
+    category: 'سلوتس',
+  },
+  'ocean': {
+    component: <SlotMachine theme="ocean" />,
+    title: 'كنز المحيط',
+    category: 'سلوتس',
+  },
+  'dragon': {
+    component: <SlotMachine theme="dragon" />,
+    title: 'تنين النار',
+    category: 'سلوتس',
+  },
+  'neon': {
+    component: <SlotMachine theme="neon" />,
+    title: 'نيون نايتس',
+    category: 'سلوتس',
+  },
   'blackjack': {
     component: <Blackjack />,
     title: 'بلاك جاك',
@@ -46,7 +71,7 @@ const gameConfigs: Record<string, { component: React.ReactNode; title: string; c
     category: 'طاولات',
   },
   'baccarat': {
-    component: <Blackjack />, // Using Blackjack as placeholder
+    component: <Blackjack />,
     title: 'باكارات',
     category: 'طاولات',
   },
