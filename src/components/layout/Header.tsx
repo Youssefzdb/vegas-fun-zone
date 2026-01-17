@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, User, LogOut, Plus, Coins, Trophy, Sparkles } from 'lucide-react';
+import { Menu, X, User, LogOut, Plus, Coins, Trophy, Sparkles, Shield } from 'lucide-react';
 import { useUser } from '@/contexts/UserContext';
 import { Button } from '@/components/ui/button';
 import AuthModal from '@/components/auth/AuthModal';
@@ -24,6 +24,7 @@ const Header: React.FC = () => {
     { name: 'طاولات', path: '/tables' },
     { name: 'كراش', path: '/crash' },
     { name: 'كازينو حي', path: '/live' },
+    { name: 'لوحة الإدارة', path: '/admin', icon: Shield, highlight: true },
   ];
 
   const isActive = (path: string) => location.pathname === path;
@@ -57,12 +58,15 @@ const Header: React.FC = () => {
                 <Link
                   key={link.path}
                   to={link.path}
-                  className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-                    isActive(link.path)
-                      ? 'bg-primary/20 text-primary'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                  className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 ${
+                    link.highlight
+                      ? 'bg-gradient-to-r from-primary/20 to-gold-dark/20 text-primary border border-primary/30 hover:border-primary/50'
+                      : isActive(link.path)
+                        ? 'bg-primary/20 text-primary'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                   }`}
                 >
+                  {link.icon && <link.icon className="w-4 h-4" />}
                   {link.name}
                 </Link>
               ))}
@@ -170,12 +174,15 @@ const Header: React.FC = () => {
                   key={link.path}
                   to={link.path}
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`block px-4 py-3 rounded-lg font-medium transition-colors ${
-                    isActive(link.path)
-                      ? 'bg-primary/20 text-primary'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                  className={`flex items-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors ${
+                    link.highlight
+                      ? 'bg-gradient-to-r from-primary/20 to-gold-dark/20 text-primary border border-primary/30'
+                      : isActive(link.path)
+                        ? 'bg-primary/20 text-primary'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                   }`}
                 >
+                  {link.icon && <link.icon className="w-4 h-4" />}
                   {link.name}
                 </Link>
               ))}
