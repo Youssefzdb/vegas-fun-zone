@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAdmin, GameConfig } from '@/contexts/AdminContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,27 +11,81 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { 
   Gamepad2, Image, Settings, Save, Trash2, Plus,
-  Upload, X, Eye
+  Upload, X, Eye, Loader2, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp', 'image/tiff'];
+
+const compressImage = (file: File, maxWidth: number = 1920, quality: number = 0.8): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = document.createElement('img');
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        
+        // Scale down if larger than maxWidth
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'));
+          return;
+        }
+        
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Convert to base64 with compression
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+};
 
 const GamesManagement: React.FC = () => {
   const { games, updateGame } = useAdmin();
   const [selectedGame, setSelectedGame] = useState<GameConfig | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   
   // Image states
   const [coverPreview, setCoverPreview] = useState<string>('');
   const [bgPreview, setBgPreview] = useState<string>('');
   const [symbols, setSymbols] = useState<{ id: string; image: string; name: string }[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, boolean>>({});
 
   const selectGame = (game: GameConfig) => {
     setSelectedGame(game);
-    setCoverPreview(game.coverImage);
-    setBgPreview(game.backgroundImage);
+    setCoverPreview(game.coverImage || '');
+    setBgPreview(game.backgroundImage || '');
     setSymbols([...game.symbols]);
   };
 
-  const handleImageUpload = (
+  const validateFile = (file: File): string | null => {
+    if (file.size > MAX_FILE_SIZE) {
+      return `حجم الملف كبير جداً. الحد الأقصى هو 10 ميجابايت. حجم ملفك: ${(file.size / (1024 * 1024)).toFixed(2)} ميجابايت`;
+    }
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      return `نوع الملف غير مدعوم. الأنواع المدعومة: JPG, PNG, GIF, WebP, SVG, BMP, TIFF`;
+    }
+    return null;
+  };
+
+  const handleImageUpload = async (
     type: 'cover' | 'background' | 'symbol',
     event: React.ChangeEvent<HTMLInputElement>,
     symbolId?: string
@@ -39,9 +93,30 @@ const GamesManagement: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
+    const error = validateFile(file);
+    if (error) {
+      toast.error(error);
+      return;
+    }
+
+    const uploadKey = type === 'symbol' ? `symbol-${symbolId}` : type;
+    setUploadProgress(prev => ({ ...prev, [uploadKey]: true }));
+
+    try {
+      // Compress image if it's large
+      let result: string;
+      if (file.size > 500 * 1024) { // If larger than 500KB, compress
+        result = await compressImage(file, type === 'background' ? 1920 : 800);
+        toast.success('تم ضغط الصورة لتوفير المساحة');
+      } else {
+        // Read directly for small images
+        result = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('Failed to read file'));
+          reader.readAsDataURL(file);
+        });
+      }
       
       if (type === 'cover') {
         setCoverPreview(result);
@@ -52,8 +127,14 @@ const GamesManagement: React.FC = () => {
           s.id === symbolId ? { ...s, image: result } : s
         ));
       }
-    };
-    reader.readAsDataURL(file);
+      
+      toast.success('تم رفع الصورة بنجاح!');
+    } catch (err) {
+      toast.error('حدث خطأ أثناء رفع الصورة');
+      console.error(err);
+    } finally {
+      setUploadProgress(prev => ({ ...prev, [uploadKey]: false }));
+    }
   };
 
   const addSymbol = () => {
@@ -75,16 +156,39 @@ const GamesManagement: React.FC = () => {
     ));
   };
 
-  const saveGame = () => {
+  const saveGame = async () => {
     if (!selectedGame) return;
 
-    updateGame(selectedGame.id, {
-      coverImage: coverPreview,
-      backgroundImage: bgPreview,
-      symbols: symbols,
-    });
+    setIsSaving(true);
+    
+    try {
+      // Update game with all changes
+      updateGame(selectedGame.id, {
+        coverImage: coverPreview,
+        backgroundImage: bgPreview,
+        symbols: symbols,
+      });
 
-    toast.success('تم حفظ التغييرات بنجاح!');
+      // Update the selected game state to reflect changes
+      setSelectedGame(prev => prev ? {
+        ...prev,
+        coverImage: coverPreview,
+        backgroundImage: bgPreview,
+        symbols: symbols,
+      } : null);
+
+      toast.success('تم حفظ التغييرات بنجاح! ✅', {
+        description: 'تم حفظ جميع الصور والإعدادات في قاعدة البيانات',
+        duration: 3000,
+      });
+    } catch (err) {
+      toast.error('حدث خطأ أثناء الحفظ', {
+        description: 'يرجى المحاولة مرة أخرى',
+      });
+      console.error(err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const toggleGameActive = (gameId: string, isActive: boolean) => {
@@ -171,9 +275,22 @@ const GamesManagement: React.FC = () => {
                       onCheckedChange={(checked) => toggleGameActive(selectedGame.id, checked)}
                     />
                   </div>
-                  <Button onClick={saveGame} className="bg-gradient-to-r from-primary to-gold-dark">
-                    <Save className="w-4 h-4 ml-2" />
-                    حفظ التغييرات
+                  <Button 
+                    onClick={saveGame} 
+                    disabled={isSaving}
+                    className="bg-gradient-to-r from-primary to-gold-dark hover:opacity-90 transition-opacity"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 ml-2 animate-spin" />
+                        جاري الحفظ...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4 ml-2" />
+                        حفظ التغييرات
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>
@@ -218,11 +335,17 @@ const GamesManagement: React.FC = () => {
                         </>
                       ) : (
                         <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-secondary/70 transition-colors">
-                          <Upload className="w-8 h-8 text-muted-foreground mb-2" />
-                          <span className="text-xs text-muted-foreground">رفع صورة</span>
+                          {uploadProgress['cover'] ? (
+                            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                          ) : (
+                            <>
+                              <Upload className="w-8 h-8 text-muted-foreground mb-2" />
+                              <span className="text-xs text-muted-foreground">رفع صورة</span>
+                            </>
+                          )}
                           <input
                             type="file"
-                            accept="image/*"
+                            accept=".jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.tiff"
                             className="hidden"
                             onChange={(e) => handleImageUpload('cover', e)}
                           />
@@ -234,7 +357,10 @@ const GamesManagement: React.FC = () => {
                         هذه الصورة ستظهر في قائمة الألعاب وصفحة اللعبة
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        الحجم المقترح: 400x300 بكسل | PNG أو JPG
+                        الحجم الأقصى: 10MB | JPG, PNG, GIF, WebP, SVG, BMP, TIFF
+                      </p>
+                      <p className="text-xs text-emerald-400 mt-1">
+                        ✓ يتم ضغط الصور الكبيرة تلقائياً
                       </p>
                     </div>
                   </div>
@@ -261,11 +387,17 @@ const GamesManagement: React.FC = () => {
                         </>
                       ) : (
                         <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-secondary/70 transition-colors">
-                          <Upload className="w-8 h-8 text-muted-foreground mb-2" />
-                          <span className="text-xs text-muted-foreground">رفع صورة</span>
+                          {uploadProgress['background'] ? (
+                            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                          ) : (
+                            <>
+                              <Upload className="w-8 h-8 text-muted-foreground mb-2" />
+                              <span className="text-xs text-muted-foreground">رفع صورة</span>
+                            </>
+                          )}
                           <input
                             type="file"
-                            accept="image/*"
+                            accept=".jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.tiff"
                             className="hidden"
                             onChange={(e) => handleImageUpload('background', e)}
                           />
@@ -277,7 +409,10 @@ const GamesManagement: React.FC = () => {
                         خلفية اللعبة التي ستظهر أثناء اللعب
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        الحجم المقترح: 1920x1080 بكسل | PNG أو JPG
+                        الحجم الأقصى: 10MB | JPG, PNG, GIF, WebP, SVG, BMP, TIFF
+                      </p>
+                      <p className="text-xs text-emerald-400 mt-1">
+                        ✓ يتم ضغط الصور الكبيرة تلقائياً
                       </p>
                     </div>
                   </div>
@@ -321,10 +456,17 @@ const GamesManagement: React.FC = () => {
                           />
                         ) : (
                           <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-secondary/70 transition-colors">
-                            <span className="text-3xl">{symbol.name}</span>
+                            {uploadProgress[`symbol-${symbol.id}`] ? (
+                              <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                            ) : (
+                              <>
+                                <Upload className="w-4 h-4 text-muted-foreground mb-1" />
+                                <span className="text-xs text-muted-foreground">رفع</span>
+                              </>
+                            )}
                             <input
                               type="file"
-                              accept="image/*"
+                              accept=".jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.tiff"
                               className="hidden"
                               onChange={(e) => handleImageUpload('symbol', e, symbol.id)}
                             />
