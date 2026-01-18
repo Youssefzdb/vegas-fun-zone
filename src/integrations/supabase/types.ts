@@ -14,7 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      games: {
+        Row: {
+          background_image: string | null
+          category: string
+          cover_image: string | null
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          max_bet: number | null
+          min_bet: number | null
+          name: string
+          rtp: number | null
+          symbols: Json | null
+          updated_at: string | null
+        }
+        Insert: {
+          background_image?: string | null
+          category: string
+          cover_image?: string | null
+          created_at?: string | null
+          id: string
+          is_active?: boolean | null
+          max_bet?: number | null
+          min_bet?: number | null
+          name: string
+          rtp?: number | null
+          symbols?: Json | null
+          updated_at?: string | null
+        }
+        Update: {
+          background_image?: string | null
+          category?: string
+          cover_image?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          max_bet?: number | null
+          min_bet?: number | null
+          name?: string
+          rtp?: number | null
+          symbols?: Json | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

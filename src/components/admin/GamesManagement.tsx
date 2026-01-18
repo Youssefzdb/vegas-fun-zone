@@ -1,78 +1,54 @@
-import React, { useState, useRef } from 'react';
-import { useAdmin, GameConfig } from '@/contexts/AdminContext';
+import React, { useState, useEffect } from 'react';
+import { useGames, GameConfig, GameSymbol } from '@/hooks/useGames';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Card, CardContent, CardDescription, CardHeader, CardTitle 
-} from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { 
-  Gamepad2, Image, Settings, Save, Trash2, Plus,
-  Upload, X, Eye, Loader2, CheckCircle2, AlertCircle
+  Gamepad2, Image, Settings, Save, Plus,
+  Upload, X, Loader2, Database
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp', 'image/tiff'];
 
-const compressImage = (file: File, maxWidth: number = 1920, quality: number = 0.8): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = document.createElement('img');
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        
-        // Scale down if larger than maxWidth
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
-        }
-        
-        canvas.width = width;
-        canvas.height = height;
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'));
-          return;
-        }
-        
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // Convert to base64 with compression
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(dataUrl);
-      };
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
-};
-
 const GamesManagement: React.FC = () => {
-  const { games, updateGame } = useAdmin();
+  const { games, loading, updateGame, uploadImage } = useGames();
   const [selectedGame, setSelectedGame] = useState<GameConfig | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   
-  // Image states
+  // Local edit states
   const [coverPreview, setCoverPreview] = useState<string>('');
   const [bgPreview, setBgPreview] = useState<string>('');
-  const [symbols, setSymbols] = useState<{ id: string; image: string; name: string }[]>([]);
+  const [symbols, setSymbols] = useState<GameSymbol[]>([]);
   const [uploadProgress, setUploadProgress] = useState<Record<string, boolean>>({});
+  
+  // Pending file uploads
+  const [pendingCoverFile, setPendingCoverFile] = useState<File | null>(null);
+  const [pendingBgFile, setPendingBgFile] = useState<File | null>(null);
+  const [pendingSymbolFiles, setPendingSymbolFiles] = useState<Record<string, File>>({});
+
+  useEffect(() => {
+    // Update selected game when games list changes
+    if (selectedGame) {
+      const updated = games.find(g => g.id === selectedGame.id);
+      if (updated) {
+        setSelectedGame(updated);
+      }
+    }
+  }, [games, selectedGame?.id]);
 
   const selectGame = (game: GameConfig) => {
     setSelectedGame(game);
     setCoverPreview(game.coverImage || '');
     setBgPreview(game.backgroundImage || '');
     setSymbols([...game.symbols]);
+    setPendingCoverFile(null);
+    setPendingBgFile(null);
+    setPendingSymbolFiles({});
   };
 
   const validateFile = (file: File): string | null => {
@@ -99,46 +75,29 @@ const GamesManagement: React.FC = () => {
       return;
     }
 
-    const uploadKey = type === 'symbol' ? `symbol-${symbolId}` : type;
-    setUploadProgress(prev => ({ ...prev, [uploadKey]: true }));
-
-    try {
-      // Compress image if it's large
-      let result: string;
-      if (file.size > 500 * 1024) { // If larger than 500KB, compress
-        result = await compressImage(file, type === 'background' ? 1920 : 800);
-        toast.success('تم ضغط الصورة لتوفير المساحة');
-      } else {
-        // Read directly for small images
-        result = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error('Failed to read file'));
-          reader.readAsDataURL(file);
-        });
-      }
+    // Create preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
       
       if (type === 'cover') {
         setCoverPreview(result);
+        setPendingCoverFile(file);
       } else if (type === 'background') {
         setBgPreview(result);
+        setPendingBgFile(file);
       } else if (type === 'symbol' && symbolId) {
         setSymbols(prev => prev.map(s => 
           s.id === symbolId ? { ...s, image: result } : s
         ));
+        setPendingSymbolFiles(prev => ({ ...prev, [symbolId]: file }));
       }
-      
-      toast.success('تم رفع الصورة بنجاح!');
-    } catch (err) {
-      toast.error('حدث خطأ أثناء رفع الصورة');
-      console.error(err);
-    } finally {
-      setUploadProgress(prev => ({ ...prev, [uploadKey]: false }));
-    }
+    };
+    reader.readAsDataURL(file);
   };
 
   const addSymbol = () => {
-    const newSymbol = {
+    const newSymbol: GameSymbol = {
       id: `symbol-${Date.now()}`,
       image: '',
       name: `رمز ${symbols.length + 1}`,
@@ -148,6 +107,11 @@ const GamesManagement: React.FC = () => {
 
   const removeSymbol = (symbolId: string) => {
     setSymbols(symbols.filter(s => s.id !== symbolId));
+    setPendingSymbolFiles(prev => {
+      const updated = { ...prev };
+      delete updated[symbolId];
+      return updated;
+    });
   };
 
   const updateSymbolName = (symbolId: string, name: string) => {
@@ -162,38 +126,79 @@ const GamesManagement: React.FC = () => {
     setIsSaving(true);
     
     try {
-      // Update game with all changes
-      updateGame(selectedGame.id, {
-        coverImage: coverPreview,
-        backgroundImage: bgPreview,
-        symbols: symbols,
+      let finalCoverImage = coverPreview;
+      let finalBgImage = bgPreview;
+      const finalSymbols = [...symbols];
+
+      // Upload cover image if pending
+      if (pendingCoverFile) {
+        setUploadProgress(prev => ({ ...prev, cover: true }));
+        finalCoverImage = await uploadImage(pendingCoverFile, `${selectedGame.id}/cover`);
+        setUploadProgress(prev => ({ ...prev, cover: false }));
+      }
+
+      // Upload background image if pending
+      if (pendingBgFile) {
+        setUploadProgress(prev => ({ ...prev, background: true }));
+        finalBgImage = await uploadImage(pendingBgFile, `${selectedGame.id}/background`);
+        setUploadProgress(prev => ({ ...prev, background: false }));
+      }
+
+      // Upload symbol images if pending
+      for (const [symbolId, file] of Object.entries(pendingSymbolFiles)) {
+        setUploadProgress(prev => ({ ...prev, [`symbol-${symbolId}`]: true }));
+        const url = await uploadImage(file, `${selectedGame.id}/symbols`);
+        const symbolIndex = finalSymbols.findIndex(s => s.id === symbolId);
+        if (symbolIndex !== -1) {
+          finalSymbols[symbolIndex] = { ...finalSymbols[symbolIndex], image: url };
+        }
+        setUploadProgress(prev => ({ ...prev, [`symbol-${symbolId}`]: false }));
+      }
+
+      // Update game in database
+      const success = await updateGame(selectedGame.id, {
+        coverImage: finalCoverImage,
+        backgroundImage: finalBgImage,
+        symbols: finalSymbols,
       });
 
-      // Update the selected game state to reflect changes
-      setSelectedGame(prev => prev ? {
-        ...prev,
-        coverImage: coverPreview,
-        backgroundImage: bgPreview,
-        symbols: symbols,
-      } : null);
+      if (success) {
+        // Clear pending files
+        setPendingCoverFile(null);
+        setPendingBgFile(null);
+        setPendingSymbolFiles({});
+        
+        // Update local state
+        setCoverPreview(finalCoverImage);
+        setBgPreview(finalBgImage);
+        setSymbols(finalSymbols);
 
-      toast.success('تم حفظ التغييرات بنجاح! ✅', {
-        description: 'تم حفظ جميع الصور والإعدادات في قاعدة البيانات',
-        duration: 3000,
-      });
+        toast.success('تم حفظ التغييرات بنجاح! ✅', {
+          description: 'تم حفظ جميع الصور في قاعدة البيانات السحابية',
+          duration: 3000,
+        });
+      } else {
+        throw new Error('Failed to update game');
+      }
     } catch (err) {
+      console.error('Error saving game:', err);
       toast.error('حدث خطأ أثناء الحفظ', {
         description: 'يرجى المحاولة مرة أخرى',
       });
-      console.error(err);
     } finally {
       setIsSaving(false);
+      setUploadProgress({});
     }
   };
 
-  const toggleGameActive = (gameId: string, isActive: boolean) => {
-    updateGame(gameId, { isActive });
-    toast.success(isActive ? 'تم تفعيل اللعبة' : 'تم إيقاف اللعبة');
+  const toggleGameActive = async (gameId: string, isActive: boolean) => {
+    const success = await updateGame(gameId, { isActive });
+    if (success) {
+      toast.success(isActive ? 'تم تفعيل اللعبة' : 'تم إيقاف اللعبة');
+      if (selectedGame?.id === gameId) {
+        setSelectedGame(prev => prev ? { ...prev, isActive } : null);
+      }
+    }
   };
 
   const getCategoryBadge = (category: string) => {
@@ -216,6 +221,15 @@ const GamesManagement: React.FC = () => {
     );
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <span className="mr-3 text-muted-foreground">جاري تحميل الألعاب...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Games List */}
@@ -224,6 +238,10 @@ const GamesManagement: React.FC = () => {
           <h3 className="font-display text-lg font-bold mb-4 flex items-center gap-2">
             <Gamepad2 className="w-5 h-5 text-primary" />
             قائمة الألعاب
+            <Badge variant="secondary" className="mr-auto">
+              <Database className="w-3 h-3 ml-1" />
+              Cloud
+            </Badge>
           </h3>
           
           <div className="space-y-2">
@@ -249,7 +267,13 @@ const GamesManagement: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                <Settings className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                {game.coverImage && (
+                  <img 
+                    src={game.coverImage} 
+                    alt={game.name}
+                    className="w-10 h-10 rounded-lg object-cover"
+                  />
+                )}
               </button>
             ))}
           </div>
@@ -288,7 +312,7 @@ const GamesManagement: React.FC = () => {
                     ) : (
                       <>
                         <Save className="w-4 h-4 ml-2" />
-                        حفظ التغييرات
+                        حفظ في السحابة
                       </>
                     )}
                   </Button>
@@ -327,11 +351,19 @@ const GamesManagement: React.FC = () => {
                             className="w-full h-full object-cover"
                           />
                           <button
-                            onClick={() => setCoverPreview('')}
+                            onClick={() => {
+                              setCoverPreview('');
+                              setPendingCoverFile(null);
+                            }}
                             className="absolute top-2 left-2 w-6 h-6 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                           >
                             <X className="w-3 h-3" />
                           </button>
+                          {pendingCoverFile && (
+                            <div className="absolute bottom-2 right-2 bg-amber-500 text-white text-xs px-2 py-1 rounded">
+                              غير محفوظ
+                            </div>
+                          )}
                         </>
                       ) : (
                         <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-secondary/70 transition-colors">
@@ -360,7 +392,7 @@ const GamesManagement: React.FC = () => {
                         الحجم الأقصى: 10MB | JPG, PNG, GIF, WebP, SVG, BMP, TIFF
                       </p>
                       <p className="text-xs text-emerald-400 mt-1">
-                        ✓ يتم ضغط الصور الكبيرة تلقائياً
+                        ✓ يتم حفظ الصور في السحابة بشكل دائم
                       </p>
                     </div>
                   </div>
@@ -379,11 +411,19 @@ const GamesManagement: React.FC = () => {
                             className="w-full h-full object-cover"
                           />
                           <button
-                            onClick={() => setBgPreview('')}
+                            onClick={() => {
+                              setBgPreview('');
+                              setPendingBgFile(null);
+                            }}
                             className="absolute top-2 left-2 w-6 h-6 rounded-full bg-destructive text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                           >
                             <X className="w-3 h-3" />
                           </button>
+                          {pendingBgFile && (
+                            <div className="absolute bottom-2 right-2 bg-amber-500 text-white text-xs px-2 py-1 rounded">
+                              غير محفوظ
+                            </div>
+                          )}
                         </>
                       ) : (
                         <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-secondary/70 transition-colors">
@@ -412,7 +452,7 @@ const GamesManagement: React.FC = () => {
                         الحجم الأقصى: 10MB | JPG, PNG, GIF, WebP, SVG, BMP, TIFF
                       </p>
                       <p className="text-xs text-emerald-400 mt-1">
-                        ✓ يتم ضغط الصور الكبيرة تلقائياً
+                        ✓ يتم حفظ الصور في السحابة بشكل دائم
                       </p>
                     </div>
                   </div>
@@ -447,13 +487,20 @@ const GamesManagement: React.FC = () => {
                         <X className="w-3 h-3" />
                       </button>
 
-                      <div className="w-16 h-16 mx-auto mb-3 rounded-lg bg-secondary/50 border-2 border-dashed border-border overflow-hidden">
+                      <div className="w-16 h-16 mx-auto mb-3 rounded-lg bg-secondary/50 border-2 border-dashed border-border overflow-hidden relative">
                         {symbol.image ? (
-                          <img 
-                            src={symbol.image} 
-                            alt={symbol.name}
-                            className="w-full h-full object-cover"
-                          />
+                          <>
+                            <img 
+                              src={symbol.image} 
+                              alt={symbol.name}
+                              className="w-full h-full object-cover"
+                            />
+                            {pendingSymbolFiles[symbol.id] && (
+                              <div className="absolute inset-0 bg-amber-500/20 flex items-center justify-center">
+                                <span className="text-xs text-amber-500">●</span>
+                              </div>
+                            )}
+                          </>
                         ) : (
                           <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-secondary/70 transition-colors">
                             {uploadProgress[`symbol-${symbol.id}`] ? (
@@ -501,7 +548,10 @@ const GamesManagement: React.FC = () => {
                     <Input
                       type="number"
                       value={selectedGame.rtp}
-                      onChange={(e) => updateGame(selectedGame.id, { rtp: parseFloat(e.target.value) })}
+                      onChange={async (e) => {
+                        const value = parseFloat(e.target.value);
+                        await updateGame(selectedGame.id, { rtp: value });
+                      }}
                       className="bg-secondary/50"
                     />
                     <p className="text-xs text-muted-foreground">النسبة المئوية للعائد النظري</p>
@@ -512,7 +562,10 @@ const GamesManagement: React.FC = () => {
                     <Input
                       type="number"
                       value={selectedGame.minBet}
-                      onChange={(e) => updateGame(selectedGame.id, { minBet: parseInt(e.target.value) })}
+                      onChange={async (e) => {
+                        const value = parseInt(e.target.value);
+                        await updateGame(selectedGame.id, { minBet: value });
+                      }}
                       className="bg-secondary/50"
                     />
                   </div>
@@ -522,7 +575,10 @@ const GamesManagement: React.FC = () => {
                     <Input
                       type="number"
                       value={selectedGame.maxBet}
-                      onChange={(e) => updateGame(selectedGame.id, { maxBet: parseInt(e.target.value) })}
+                      onChange={async (e) => {
+                        const value = parseInt(e.target.value);
+                        await updateGame(selectedGame.id, { maxBet: value });
+                      }}
                       className="bg-secondary/50"
                     />
                   </div>
